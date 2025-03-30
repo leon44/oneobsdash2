@@ -253,12 +253,7 @@ document.addEventListener('DOMContentLoaded', () => {
             timeInput.max = maxTime;
             timeInput.value = maxTime;
             
-            // Add UTC label
-            const utcLabel = L.DomUtil.create('div', '', container);
-            utcLabel.style.fontSize = '12px';
-            utcLabel.style.color = '#666';
-            utcLabel.style.marginTop = '2px';
-            utcLabel.textContent = 'UTC Time';
+
             
             // Prevent future dates (in case of manual entry)
             timeInput.addEventListener('input', () => {
