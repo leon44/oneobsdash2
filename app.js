@@ -131,8 +131,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initialize map with a temporary view (will be updated with geolocation)
     const map = L.map('map', {
         minZoom: 7,  // Prevent zooming out further than level 7
-        zoom: 9  // Default zoom level when location is found
-    }).setView([51.25, 0.25], 9); // Temporary view
+        zoom: 11  // Default zoom level when location is found
+    }).setView([51.25, 0.25], 11); // Temporary view
 
     // Add tile layer immediately
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -241,6 +241,47 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Create a custom control for time picker
+    const TimePickerControl = L.Control.extend({
+        onAdd: function(map) {
+            const container = L.DomUtil.create('div', 'leaflet-bar leaflet-control time-picker-control');
+            
+            // Add datetime picker for UTC time
+            const timeInput = L.DomUtil.create('input', '', container);
+            timeInput.type = 'datetime-local';
+            timeInput.id = 'time-picker';
+            // Set min date to 1990 UTC
+            timeInput.min = '1990-01-01T00:00';
+            // Set max date and default to current UTC time
+            const now = new Date();
+            const utcString = now.toISOString();
+            const maxTime = utcString.slice(0, 16);
+            timeInput.max = maxTime;
+            timeInput.value = maxTime;
+            
+            // Add UTC label
+            const utcLabel = L.DomUtil.create('div', '', container);
+            utcLabel.style.fontSize = '12px';
+            utcLabel.style.color = '#666';
+            utcLabel.style.marginTop = '2px';
+            utcLabel.textContent = 'UTC Time';
+            
+            // Prevent future dates (in case of manual entry)
+            timeInput.addEventListener('input', () => {
+                const selectedTime = new Date(timeInput.value + 'Z');
+                const currentTime = new Date();
+                if (selectedTime > currentTime) {
+                    timeInput.value = maxTime;
+                }
+            });
+
+            // Store reference to the time picker
+            timePicker = timeInput;
+            
+            return container;
+        }
+    });
+
     // Create a custom control for display mode
     const DisplayModeControl = L.Control.extend({
         onAdd: function(map) {
@@ -270,45 +311,12 @@ document.addEventListener('DOMContentLoaded', () => {
             // Store reference to the select element
             displayModeFilter = select;
 
-            // Add datetime picker for UTC time
-            const timeInput = L.DomUtil.create('input', '', container);
-            timeInput.type = 'datetime-local';
-            timeInput.id = 'time-picker';
-            timeInput.style.marginTop = '5px';
-            // Set min date to 1990 UTC
-            timeInput.min = '1990-01-01T00:00';
-            // Set max date and default to current UTC time
-            const now = new Date();
-            const utcString = now.toISOString();
-            const maxTime = utcString.slice(0, 16);
-            timeInput.max = maxTime;
-            timeInput.value = maxTime;
-            // Add UTC label
-            const utcLabel = L.DomUtil.create('div', '', container);
-            utcLabel.style.fontSize = '12px';
-            utcLabel.style.color = '#666';
-            utcLabel.style.marginTop = '2px';
-            utcLabel.textContent = 'UTC Time';
-            
-            // Prevent future dates (in case of manual entry)
-            timeInput.addEventListener('input', () => {
-                const selectedTime = new Date(timeInput.value + 'Z');
-                const currentTime = new Date();
-                if (selectedTime > currentTime) {
-                    timeInput.value = maxTime;
-                }
-            });
-
-            // Store reference to the time picker
-            timePicker = timeInput;
-
             // Prevent map zoom when scrolling the select
             L.DomEvent.disableClickPropagation(container);
             L.DomEvent.disableScrollPropagation(container);
 
-            // Add change event listeners to update the map
+            // Add change event listener to update the map
             select.addEventListener('change', () => fetchStationData());
-            timeInput.addEventListener('change', () => fetchStationData());
 
             return container;
         }
@@ -316,6 +324,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Add the controls to the map
     new StationFilterControl({ position: 'topright' }).addTo(map);
+    new TimePickerControl({ position: 'topright' }).addTo(map);
     new DisplayModeControl({ position: 'topright' }).addTo(map);
 
     // Function to fetch weather station data

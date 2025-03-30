@@ -47,8 +47,25 @@ body {
 }
 
 /* Time picker styles */
+.time-picker-control {
+    margin-bottom: 10px !important;
+}
+
+.display-control {
+    margin-bottom: 10px !important;
+}
+
+.display-control select {
+    width: 200px;
+    padding: 4px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+    background-color: white;
+}
+
 #time-picker {
-    width: 100%;
+    width: 200px;
     padding: 4px;
     border: 1px solid #ccc;
     border-radius: 4px;
