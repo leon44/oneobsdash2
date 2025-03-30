@@ -144,15 +144,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const TitleControl = L.Control.extend({
         onAdd: function(map) {
             const container = L.DomUtil.create('div', 'leaflet-control title-control');
-            container.style.padding = '8px 12px';
-            container.style.background = 'white';
-            container.style.border = '2px solid #666';
-            container.style.borderRadius = '4px';
-            container.style.fontFamily = 'Arial, sans-serif';
-            container.style.boxShadow = '0 2px 4px rgba(0,0,0,0.2)';
             container.innerHTML = `
-                <div style="font-size: 16px; font-weight: bold; margin-bottom: 4px;">OneObs Dash V2</div>
-                <div style="font-size: 12px; color: #666;">Vibe coded by Claude 3.5 & Leon</div>
+                <div style="font-size: 16px; font-weight: bold; white-space: nowrap;">OneObs Dash V2</div>
+                <div style="font-size: 12px; color: #666; white-space: nowrap;">Vibe coded by Claude 3.5 & Leon</div>
             `;
             return container;
         }
@@ -167,7 +161,7 @@ document.addEventListener('DOMContentLoaded', () => {
             (position) => {
                 const lat = position.coords.latitude;
                 const lng = position.coords.longitude;
-                map.setView([lat, lng], 9);
+                map.setView([lat, lng], map.getZoom());
                 fetchStationData(); // Refresh stations for new location
             },
             // Error callback

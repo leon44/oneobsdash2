@@ -99,6 +99,22 @@ body {
     cursor: pointer;
 }
 
+.title-control {
+    margin-left: 10px !important;
+    background: white;
+    padding: 8px 12px;
+    border: 2px solid #666;
+    border-radius: 4px;
+    font-family: Arial, sans-serif;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.leaflet-left {
+    display: flex;
+    align-items: center;
+    padding-top: 10px;
+}
+
 .station-info {
     background-color: #f8f9fa;
     padding: 15px;
