@@ -1,5 +1,15 @@
+// Token cache
+let cachedToken = null;
+let tokenExpiry = null;
+
 // Function to obtain access token
 async function getAccessToken() {
+    // Check if we have a valid cached token
+    if (cachedToken && tokenExpiry && Date.now() < tokenExpiry) {
+        return cachedToken;
+    }
+
+    // If not, request a new token
     const tokenResponse = await fetch('https://api.auth.dtn.com/v1/tokens/authorize', {
         method: 'POST',
         headers: {
@@ -13,7 +23,12 @@ async function getAccessToken() {
         })
     });
     const tokenData = await tokenResponse.json();
-    return tokenData.data.access_token;
+    
+    // Cache the token and set expiry (45 minutes to be safe, even though tokens typically last 1 hour)
+    cachedToken = tokenData.data.access_token;
+    tokenExpiry = Date.now() + (45 * 60 * 1000); // 45 minutes in milliseconds
+    
+    return cachedToken;
 }
 
 // Function to fetch observations for a station
