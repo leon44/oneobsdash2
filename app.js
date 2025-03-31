@@ -343,7 +343,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 showTags: true,
                 showLatest: true,
                 interval: '1h',
-                parameters: 'airTemp,windSpeed,windDirection,relativeHumidity,surfaceTemp,shortWaveRadiation,globalRadiation60Min,precipAcc60Min'
+                parameters: 'airTemp,windSpeed,windSpeed2m,windDirection,relativeHumidity,surfaceTemp,shortWaveRadiation,globalRadiation60Min,precipAcc60Min'
             };
 
             // Add obsTypes parameter only for WMO stations
@@ -407,12 +407,20 @@ document.addEventListener('DOMContentLoaded', () => {
                             displayValue = `${value}W/m²`;
                         }
                     } else {
-                        value = latestObs[displayMode];
-                        if (value !== undefined) {
-                            displayValue = displayMode === 'airTemp' ? `${value}°C` : 
-                                         displayMode === 'surfaceTemp' ? `${value}°C` :
-                                         displayMode === 'precipAcc60Min' ? `${value}mm` :
-                                         displayMode === 'windSpeed' ? `${value}m/s` : value;
+                        if (displayMode === 'windSpeed') {
+                            // Try windSpeed first, fall back to windSpeed2m
+                            value = latestObs.windSpeed;
+                            if (value === undefined) {
+                                value = latestObs.windSpeed2m;
+                            }
+                            displayValue = value !== undefined ? `${value}m/s` : undefined;
+                        } else {
+                            value = latestObs[displayMode];
+                            if (value !== undefined) {
+                                displayValue = displayMode === 'airTemp' ? `${value}°C` : 
+                                             displayMode === 'surfaceTemp' ? `${value}°C` :
+                                             displayMode === 'precipAcc60Min' ? `${value}mm` : value;
+                            }
                         }
                     }
                 }
