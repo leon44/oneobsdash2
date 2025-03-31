@@ -26,8 +26,8 @@ body {
     margin: 5% auto;
     padding: 20px;
     border: 1px solid #888;
-    width: 80%;
-    max-height: 80vh;
+    width: 90%;
+    max-height: 90vh;
     border-radius: 5px;
     box-shadow: 0 4px 8px rgba(0,0,0,0.1);
 }
@@ -44,6 +44,13 @@ body {
 .modal-body {
     max-height: calc(80vh - 100px);
     overflow-y: auto;
+}
+
+#modalChartContent {
+    height: 60vh;
+    padding: 20px;
+    background: white;
+    border-radius: 8px;
 }
 
 /* Time picker styles */
@@ -152,6 +159,34 @@ body {
     color: black;
     text-decoration: none;
     cursor: pointer;
+}
+
+.modal-view-toggle {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin: 10px 0;
+    padding: 0 20px;
+}
+
+.view-btn {
+    padding: 8px 16px;
+    border: 1px solid #2b6cb0;
+    background: white;
+    color: #2b6cb0;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+
+.view-btn:hover {
+    background: #ebf8ff;
+}
+
+.view-btn.active {
+    background: #2b6cb0;
+    color: white;
 }
 
 /* Table styles */

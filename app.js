@@ -516,9 +516,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 const popupContent = `
                     <div>
                         <h3>${feature.tags?.name || 'Weather Station'}</h3>
-                        <p>Station Code: ${feature.tags?.stationCode || 'N/A'}</p>
-                        <p>Observed ${lastObsTime}</p>
-                        ${latestValues ? `<p>Latest Observations:<br>${latestValues}</p>` : ''}
+                        <p>${feature.tags?.stationCode || 'N/A'}</p>
+                        ${latestValues ? `<p>Observed ${lastObsTime}:<br>${latestValues}</p>` : ''}
                         ${tags ? `<p>Additional Info:<br>${tags}</p>` : ''}
                         <button onclick="window.showObservations('${feature.tags?.stationCode || 'N/A'}', 'airTemp,windSpeed,windDirection,relativeHumidity,surfaceTemp,shortWaveRadiation,globalRadiation60Min,precipAcc60Min');" style="padding: 5px 10px; cursor: pointer;">View Observations</button>
                     </div>
@@ -541,10 +540,26 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // Global function to show observations in modal
+// Helper function to generate random colors for chart lines
+function getRandomColor() {
+    const letters = '0123456789ABCDEF';
+    let color = '#';
+    for (let i = 0; i < 6; i++) {
+        color += letters[Math.floor(Math.random() * 16)];
+    }
+    return color;
+}
+
+// Global variable for chart
+let currentChart = null;
+
 window.showObservations = async function(stationCode, paramString) {
     const parameters = paramString.split(',');
     const modal = document.getElementById('obsModal');
     const modalContent = document.getElementById('modalObsContent');
+    const modalChartContent = document.getElementById('modalChartContent');
+    const tableViewBtn = document.getElementById('tableViewBtn');
+    const chartViewBtn = document.getElementById('chartViewBtn');
     document.getElementById('modalStationName').textContent = 'Loading...';
     
     // Show loading state
@@ -616,11 +631,108 @@ window.showObservations = async function(stationCode, paramString) {
             
             tableHtml += '</tbody></table>';
             modalContent.innerHTML = tagsHtml + tableHtml;
+
+            // Setup chart data
+            const chartData = {
+                labels: result.observations.map(obs => new Date(obs.timestamp)),
+                datasets: availableParams.map(param => ({
+                    label: paramDisplayNames[param] || param,
+                    data: result.observations.map(obs => obs[param]),
+                    borderColor: getRandomColor(),
+                    fill: false,
+                    tension: 0.4
+                }))
+            };
+
+            // Initialize chart view
+            function createChart() {
+                if (currentChart) {
+                    currentChart.destroy();
+                }
+
+                const ctx = document.getElementById('obsChart').getContext('2d');
+                currentChart = new Chart(ctx, {
+                    type: 'line',
+                    data: chartData,
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: {
+                                type: 'time',
+                                time: {
+                                    unit: 'hour',
+                                    displayFormats: {
+                                        hour: 'MMM d, HH:mm'
+                                    }
+                                },
+                                title: {
+                                    display: true,
+                                    text: 'Time (UTC)'
+                                }
+                            },
+                            y: {
+                                beginAtZero: false
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                position: 'top',
+                                labels: {
+                                    usePointStyle: true
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            // Setup view toggle handlers
+            tableViewBtn.onclick = function() {
+                tableViewBtn.classList.add('active');
+                chartViewBtn.classList.remove('active');
+                modalContent.style.display = 'block';
+                modalChartContent.style.display = 'none';
+            };
+
+            chartViewBtn.onclick = function() {
+                chartViewBtn.classList.add('active');
+                tableViewBtn.classList.remove('active');
+                modalContent.style.display = 'none';
+                modalChartContent.style.display = 'block';
+                createChart();
+            };
+
+            // Show table view by default
+            tableViewBtn.classList.add('active');
+            chartViewBtn.classList.remove('active');
+            modalContent.style.display = 'block';
+            modalChartContent.style.display = 'none';
         } else {
             modalContent.innerHTML = '<p>No observations found for the selected parameters.</p>';
         }
     } catch (error) {
         console.error('Error fetching station observations:', error);
         modalContent.innerHTML = '<p>Error loading observations. Please try again later.</p>';
+    }
+
+    // Add close handlers
+    const closeBtn = document.getElementsByClassName('close')[0];
+    closeBtn.onclick = function() {
+        modal.style.display = 'none';
+        if (currentChart) {
+            currentChart.destroy();
+            currentChart = null;
+        }
+    }
+
+    window.onclick = function(event) {
+        if (event.target == modal) {
+            modal.style.display = 'none';
+            if (currentChart) {
+                currentChart.destroy();
+                currentChart = null;
+            }
+        }
     }
 };

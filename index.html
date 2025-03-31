@@ -17,11 +17,20 @@
                 <h2 id="modalStationName"></h2>
                 <span class="close">&times;</span>
             </div>
+            <div class="modal-view-toggle">
+                <button id="tableViewBtn" class="view-btn active">Table View</button>
+                <button id="chartViewBtn" class="view-btn">Chart View</button>
+            </div>
             <div id="modalObsContent" class="modal-body"></div>
+            <div id="modalChartContent" class="modal-body" style="display: none;">
+                <canvas id="obsChart"></canvas>
+            </div>
         </div>
     </div>
 
     <script src="lib/leaflet/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
     <script src="app.js?v=1"></script>
 </body>
 </html>
