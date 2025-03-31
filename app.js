@@ -1,9 +1,18 @@
 // Token cache
-let cachedToken = null;
-let tokenExpiry = null;
+let cachedObsToken = null;
+let cachedForecastToken = null;
+let obsTokenExpiry = null;
+let forecastTokenExpiry = null;
 
-// Function to obtain access token
-async function getAccessToken() {
+// Function to obtain access tokens
+async function getAccessToken(type = 'observations') {
+    const audience = type === 'observations' 
+        ? 'https://weather.api.dtn.com/observations'
+        : 'https://weather.api.dtn.com/conditions';
+    
+    const cachedToken = type === 'observations' ? cachedObsToken : cachedForecastToken;
+    const tokenExpiry = type === 'observations' ? obsTokenExpiry : forecastTokenExpiry;
+
     // Check if we have a valid cached token
     if (cachedToken && tokenExpiry && Date.now() < tokenExpiry) {
         return cachedToken;
@@ -19,28 +28,127 @@ async function getAccessToken() {
             'grant_type': 'client_credentials',
             'client_id': 'Nv9sG40T9qR2uxaOABSYyt5MATtgCBwE',
             'client_secret': '4M_9P-lm78JvJJ9suV-p3b2oJatPYj5DWdp7P1hbRVM2H5epEsf6gpOWFNt2_U1X',
-            'audience': 'https://weather.api.dtn.com/observations'
+            'audience': audience
         })
     });
     const tokenData = await tokenResponse.json();
+    console.log('Token response for', type, ':', tokenData);
     
     // Cache the token and set expiry (45 minutes to be safe, even though tokens typically last 1 hour)
-    cachedToken = tokenData.data.access_token;
-    tokenExpiry = Date.now() + (45 * 60 * 1000); // 45 minutes in milliseconds
-    
-    return cachedToken;
+    if (type === 'observations') {
+        cachedObsToken = tokenData.data.access_token;
+        obsTokenExpiry = Date.now() + (45 * 60 * 1000); // 45 minutes in milliseconds
+        return cachedObsToken;
+    } else {
+        // Both APIs return token in data object
+        cachedForecastToken = tokenData.data.access_token;
+        forecastTokenExpiry = Date.now() + (45 * 60 * 1000);
+        return cachedForecastToken;
+    }
+}
+
+// Function to fetch forecast data
+async function fetchForecastData(lat, lon, startTime, parameters) {
+    try {
+        console.log('Getting conditions token...');
+        const accessToken = await getAccessToken('conditions');
+        console.log('Got conditions token:', accessToken);
+        
+        // Calculate start and end times
+        // Start time is 12 hours ago
+        const start = new Date(Date.now() - 12 * 60 * 60 * 1000);
+        //start.setMinutes(start.getMinutes() - start.getTimezoneOffset()); // Convert to UTC
+        // End time is 24 hours into the future
+        const endTime = new Date(Date.now() + 24 * 60 * 60 * 1000);
+        //endTime.setMinutes(endTime.getMinutes() - endTime.getTimezoneOffset()); // Convert to UTC
+
+        // Map observation parameters to conditions parameters
+        // Note: surfaceTemp is not available in conditions API
+        const parameterMap = {
+            // Temperature parameters
+            'airTemp': 'airTemp',
+            'airTempLowerBound': 'airTempLowerBound',
+            'airTempUpperBound': 'airTempUpperBound',
+            'relativeHumidity': 'relativeHumidity',
+            // Wind parameters
+            'windSpeed': 'windSpeed',
+            'windSpeed2m': 'windSpeed2m',
+            'windSpeedLowerBound': 'windSpeedLowerBound',
+            'windSpeedUpperBound': 'windSpeedUpperBound',
+            'windDirection': 'windDirection',
+            // Radiation parameters
+            'shortWaveRadiation': 'shortWaveRadiation',
+            'globalRadiation60Min': 'globalRadiation',
+            'sunshine60Min': 'sunshineDuration',
+            'cloudCover': 'totalCloudCover'
+        };
+
+        const conditionsParams = parameters
+            .map(p => parameterMap[p])
+            .filter(p => p); // Remove undefined mappings
+
+        // Build query parameters
+        const queryParams = new URLSearchParams();
+        queryParams.append('lat', lat);
+        queryParams.append('lon', lon);
+        queryParams.append('startTime', start.toISOString());
+        queryParams.append('endTime', endTime.toISOString());
+        // Add each parameter individually
+        conditionsParams.forEach(param => {
+            queryParams.append('parameters', param);
+        });
+
+        const url = `https://weather.api.dtn.com/v2/conditions?${queryParams}`;
+        console.log('Fetching forecast data from:', url);
+        console.log('Using token:', accessToken);
+
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${accessToken}`
+            }
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('Error response:', errorText);
+            throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
+        }
+
+        const data = await response.json();
+        console.log('Forecast data response:', data);
+
+        // Transform the timestamped properties into an array of forecasts
+        const properties = data.features?.[0]?.properties || {};
+        const forecasts = Object.entries(properties)
+            .map(([timestamp, values]) => ({
+                timestamp,
+                ...values
+            }))
+            .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+        return {
+            forecasts,
+            startTime: start,
+            endTime: endTime
+        };
+    } catch (error) {
+        console.error('Error fetching forecast data:', error);
+        return { forecasts: [], startTime: null, endTime: null };
+    }
 }
 
 // Function to fetch observations for a station
 async function fetchStationObservations(stationCode, parameters) {
     try {
+        console.log('Fetching observations for station:', stationCode);
         if (stationCode === 'N/A') {
             return { observations: [], tags: {} };
         }
 
-        const accessToken = await getAccessToken();
+        const accessToken = await getAccessToken('observations');
         const endTime = new Date().toISOString();
-        const startTime = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const startTime = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
         
         const queryParams = new URLSearchParams({
             stationCode,
@@ -50,6 +158,7 @@ async function fetchStationObservations(stationCode, parameters) {
             showTags: true
         });
 
+        console.log('Fetching observations with params:', queryParams.toString());
         const response = await fetch(`https://obs.api.dtn.com/v2/observations?${queryParams}`, {
             method: 'GET',
             headers: {
@@ -57,19 +166,25 @@ async function fetchStationObservations(stationCode, parameters) {
             }
         });
 
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('Error response from observations API:', errorText);
+            throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
+        }
+
         const data = await response.json();
-        console.log('Observations:', data);
+        console.log('Raw observation response:', JSON.stringify(data, null, 2));
 
         if (!data.features || data.features.length === 0) {
             return { observations: [], tags: {} };
         }
 
         const feature = data.features[0];
-        const observations = feature.properties || {};
+        const properties = feature.properties || {};
         const tags = feature.tags || {};
         
         // Convert the time-based properties into an array of observations
-        const observationArray = Object.entries(observations)
+        const observationArray = Object.entries(properties)
             .filter(([key]) => !isNaN(new Date(key).getTime()) && key !== 'tags')
             .sort((a, b) => new Date(b[0]) - new Date(a[0]))
             .map(([timestamp, values]) => ({
@@ -77,9 +192,14 @@ async function fetchStationObservations(stationCode, parameters) {
                 ...values
             }));
 
-        return { observations: observationArray, tags };
+        return {
+            ...data, // Include the full GeoJSON response
+            observations: observationArray,
+            tags
+        };
     } catch (error) {
-        console.error('Error fetching station observations:', error);
+        console.error('Error fetching station observations:', error.message);
+        console.error('Full error:', error);
         return { observations: [], tags: {} };
     }
 }
@@ -91,6 +211,12 @@ function formatRelativeTime(timestamp) {
     const now = new Date();
     const date = new Date(timestamp);
     const diffMs = now - date;
+    
+    // If it's a future timestamp, just show the timestamp
+    if (diffMs < 0) {
+        return date.toISOString();
+    }
+    
     const diffSecs = Math.floor(diffMs / 1000);
     const diffMins = Math.floor(diffSecs / 60);
 
@@ -519,7 +645,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <p>${feature.tags?.stationCode || 'N/A'}</p>
                         ${latestValues ? `<p>Observed ${lastObsTime}:<br>${latestValues}</p>` : ''}
                         ${tags ? `<p>Additional Info:<br>${tags}</p>` : ''}
-                        <button onclick="window.showObservations('${feature.tags?.stationCode || 'N/A'}', 'airTemp,windSpeed,windDirection,relativeHumidity,surfaceTemp,shortWaveRadiation,globalRadiation60Min,precipAcc60Min');" style="padding: 5px 10px; cursor: pointer;">View Observations</button>
+                        <button onclick="window.showObservations('${feature.tags?.stationCode || 'N/A'}', '${currentGroup}');" style="padding: 5px 10px; cursor: pointer;">View Data</button>
                     </div>
                 `;
 
@@ -550,11 +676,80 @@ function getRandomColor() {
     return color;
 }
 
-// Global variable for chart
+// Parameter groups configuration
+const parameterGroups = {
+    'Temperature': {
+        observations: ['airTemp', 'surfaceTemp', 'relativeHumidity'],
+        conditions: ['airTemp', 'airTempLowerBound', 'airTempUpperBound', 'relativeHumidity'],
+        units: {
+            'airTemp': '°C',
+            'airTempLowerBound': '°C',
+            'airTempUpperBound': '°C',
+            'surfaceTemp': '°C',
+            'relativeHumidity': '%'
+        }
+    },
+    'Wind': {
+        observations: ['windSpeed', 'windSpeed2m', 'windDirection'],
+        conditions: ['windSpeed', 'windSpeedLowerBound', 'windSpeedUpperBound', 'windDirection', 'windSpeed2m'],
+        units: {
+            'windSpeed': 'm/s',
+            'windSpeed2m': 'm/s',
+            'windDirection': '°',
+            'windSpeedLowerBound': 'm/s',
+            'windSpeedUpperBound': 'm/s'
+        }
+    },
+    'Radiation': {
+        observations: ['shortWaveRadiation', 'globalRadiation60Min', 'sunshine60Min', 'cloudCover'],
+        conditions: ['shortWaveRadiation', 'globalRadiation', 'sunshineDuration', 'totalCloudCover'],
+        units: {
+            'shortWaveRadiation': 'W/m²',
+            'globalRadiation60Min': 'J/cm²',
+            'globalRadiation': 'J/cm²',
+            'sunshine60Min': 'min',
+            'sunshineDuration': 'min',
+            'cloudCover': '%',
+            'totalCloudCover': '%'
+        }
+    }
+};
+
+// Global variables
 let currentChart = null;
+let currentGroup = 'Temperature'; // Default group
+let currentStationLat = null;
+let currentStationLon = null;
+let currentStationEarliestTime = null;
+
+// Get all available parameters from all groups
+const getAllParameters = () => {
+    const obsParams = new Set();
+    const condParams = new Set();
+    
+    Object.values(parameterGroups).forEach(group => {
+        group.observations.forEach(param => obsParams.add(param));
+        group.conditions.forEach(param => condParams.add(param));
+    });
+    
+    return {
+        observations: Array.from(obsParams),
+        conditions: Array.from(condParams)
+    };
+};
 
 window.showObservations = async function(stationCode, paramString) {
-    const parameters = paramString.split(',');
+    // Get the current group's parameters for display
+    const group = parameterGroups[paramString || currentGroup];
+    if (!group) {
+        throw new Error('Invalid parameter group');
+    }
+    
+    // Get all parameters for fetching data
+    const allParams = getAllParameters();
+    // Get display parameters from the current group
+    const displayObsParams = group.observations || [];
+    const displayCondParams = group.conditions || [];
     const modal = document.getElementById('obsModal');
     const modalContent = document.getElementById('modalObsContent');
     const modalChartContent = document.getElementById('modalChartContent');
@@ -562,177 +757,658 @@ window.showObservations = async function(stationCode, paramString) {
     const chartViewBtn = document.getElementById('chartViewBtn');
     document.getElementById('modalStationName').textContent = 'Loading...';
     
-    // Show loading state
+    // Show loading state and clear previous content
     modalContent.innerHTML = '<p>Loading observations...</p>';
+    document.getElementById('metadata-section')?.remove(); // Remove any existing metadata section
     modal.style.display = 'block';
     
     try {
-        const result = await fetchStationObservations(stationCode, parameters);
+        if (!stationCode || stationCode === 'N/A') {
+            throw new Error('Invalid station code');
+        }
+
+        // Validate parameters
+        if (!allParams.observations.length && !allParams.conditions.length) {
+            throw new Error('No parameters specified');
+        }
+
+        console.log('Fetching observations for station:', stationCode);
+        console.log('Observation parameters:', allParams.observations);
+        console.log('Forecast parameters:', allParams.conditions);
         
-        // Update modal title with station name
-        document.getElementById('modalStationName').textContent = result.tags?.name || 'Weather Station';
+        // Fetch all observations
+        const result = await fetchStationObservations(stationCode, allParams.observations);
+        
+        if (!result) {
+            throw new Error('No result returned from fetchStationObservations');
+        }
+        
+        // Initialize modal content with a container for metadata
+        const modalTitle = document.getElementById('modalStationName');
+        const modalHeader = modalTitle.parentElement;
+        modalHeader.insertAdjacentHTML('afterend', `
+            <div id="metadata-section">
+                <div id="metadata-container"></div>
+                <div class="group-selector" style="margin: 15px 0;">
+                    <label for="parameterGroup"><strong>Parameter Group:</strong></label>
+                    <select id="parameterGroup" style="margin-left: 10px; padding: 5px;">
+                        ${Object.keys(parameterGroups).map(group => 
+                            `<option value="${group}" ${group === currentGroup ? 'selected' : ''}>${group}</option>`
+                        ).join('')}
+                    </select>
+                </div>
+                <hr class="metadata-separator" style="margin: 15px 0;">
+            </div>
+        `);
+
+        // Get station coordinates and fetch forecast if available
+        let forecastData = { forecasts: [] };
+        
+        // Get station coordinates for forecast
+        currentStationLat = result.features?.[0]?.geometry?.coordinates?.[1];
+        currentStationLon = result.features?.[0]?.geometry?.coordinates?.[0];
+        currentStationEarliestTime = result.observations[0]?.timestamp;
+        
+        if (currentStationLat && currentStationLon && allParams.conditions.length > 0) {
+            try {
+                if (currentStationEarliestTime) {
+                    forecastData = await fetchForecastData(currentStationLat, currentStationLon, currentStationEarliestTime, allParams.conditions);
+                }
+            } catch (error) {
+                console.warn('Error fetching forecast data:', error);
+            }
+        }
+        
+        // Get coordinates from the GeoJSON feature
+        const coordinates = result.features?.[0]?.geometry?.coordinates;
+        console.log('Coordinates from GeoJSON:', coordinates);
+        
+        if (coordinates && coordinates.length >= 2) {
+            const [longitude, latitude] = coordinates; // GeoJSON uses [longitude, latitude] order
+            console.log('Found station coordinates:', latitude, longitude);
+            
+            // Get the earliest observation time as the start time for forecast
+            const observationTimes = result.observations
+                .filter(obs => obs && obs.timestamp)
+                .map(obs => new Date(obs.timestamp));
+            
+            if (observationTimes.length > 0) {
+                const earliestTime = new Date(Math.min(...observationTimes));
+                console.log('Using start time for forecast:', earliestTime);
+                
+                try {
+                    // Use the current group if paramString is not provided
+                    const group = parameterGroups[paramString || currentGroup];
+                    if (!group) {
+                        console.warn('Invalid parameter group:', paramString || currentGroup);
+                        return;
+                    }
+                    
+                    // Fetch forecast data with conditions parameters
+                    forecastData = await fetchForecastData(
+                        latitude,
+                        longitude,
+                        earliestTime,
+                        group.conditions || []
+                    );
+                    console.log('Received forecast data:', forecastData);
+                } catch (error) {
+                    console.error('Error fetching forecast data:', error);
+                }
+            } else {
+                console.warn('No valid observation times found for forecast');
+            }
+        }
         
         if (result.observations && result.observations.length > 0) {
-            // Display tags first (excluding 'name' tag)
-            let tagsHtml = '<div class="station-tags">';
-            if (result.tags) {
-                Object.entries(result.tags)
-                    .filter(([key]) => key !== 'name')
-                    .forEach(([key, value]) => {
-                        tagsHtml += `<div class="tag"><strong>${key}:</strong> ${value}</div>`;
-                    });
-            }
-            tagsHtml += '</div>';
+            // Get coordinates from the GeoJSON feature
+            const coordinates = result.features?.[0]?.geometry?.coordinates;
+            const [longitude, latitude] = coordinates || [null, null];
+
+            // Create metadata section
+            const metadata = [
+                ...((latitude && longitude) ? [['Location', `${latitude.toFixed(4)}°N, ${longitude.toFixed(4)}°E`]] : []),
+                ...Object.entries(result.tags || {}).filter(([key]) => key !== 'name')
+            ];
             
-            // Determine which parameters have data
-            const availableParams = parameters.filter(param => 
-                result.observations.some(obs => obs[param] !== undefined)
-            );
-
-            // Create a mapping of parameter names to display names
-            const paramDisplayNames = {
-                'airTemp': 'Temperature (°C)',
-                'surfaceTemp': 'RST (°C)',
-                'shortWaveRadiation': 'Radiation (W/m²)',
-                'globalRadiation60Min': 'Radiation (J/cm²)',
-                'precipAcc60Min': 'Precipitation (mm)',
-                'windSpeed': 'Wind Speed (m/s)',
-                'windDirection': 'Wind Direction (°)',
-                'relativeHumidity': 'Humidity (%)'
-            };
-
-            // Create table header only for available parameters
-            let tableHtml = '<table class="obs-table"><thead><tr><th>Time (UTC)</th>';
-            availableParams.forEach(param => {
-                tableHtml += `<th>${paramDisplayNames[param] || param}</th>`;
+            // First update the station name and metadata
+            document.getElementById('modalStationName').textContent = result.tags?.name || 'Weather Station';
+            
+            let metadataHtml = '<div class="station-metadata">';
+            metadata.forEach(([key, value]) => {
+                metadataHtml += `<div class="metadata-item"><strong>${key}:</strong> ${value}</div>`;
             });
-            tableHtml += '</tr></thead><tbody>';
+            metadataHtml += '</div>';
+            document.getElementById('metadata-container').innerHTML = metadataHtml;
             
-            // Add table rows
-            result.observations.forEach(obs => {
-                tableHtml += `<tr><td>${formatRelativeTime(obs.timestamp)}</td>`;
-                availableParams.forEach(param => {
-                    const value = obs[param];
-                    let displayValue = '-';
-                    if (value !== undefined) {
-                        // Special handling for radiation values
-                        if (param === 'shortWaveRadiation' || param === 'globalRadiation60Min') {
-                            displayValue = value.toFixed(1);
-                        } else if (['airTemp', 'surfaceTemp', 'windSpeed'].includes(param)) {
-                            displayValue = value.toFixed(1);
-                        } else {
-                            displayValue = value;
-                        }
+            // Add event listener for group selection
+            const groupSelect = document.getElementById('parameterGroup');
+            groupSelect.addEventListener('change', async (event) => {
+                currentGroup = event.target.value;
+                const newGroup = parameterGroups[currentGroup];
+                
+                // Refetch forecast data if we have station coordinates
+                if (currentStationLat && currentStationLon && currentStationEarliestTime) {
+                    try {
+                        forecastData = await fetchForecastData(currentStationLat, currentStationLon, currentStationEarliestTime, allParams.conditions);
+                    } catch (error) {
+                        console.warn('Error fetching forecast data:', error);
                     }
-                    tableHtml += `<td>${displayValue}</td>`;
-                });
-                tableHtml += '</tr>';
-            });
-            
-            tableHtml += '</tbody></table>';
-            modalContent.innerHTML = tagsHtml + tableHtml;
-
-            // Setup chart data
-            const chartData = {
-                labels: result.observations.map(obs => new Date(obs.timestamp)),
-                datasets: availableParams.map(param => ({
-                    label: paramDisplayNames[param] || param,
-                    data: result.observations.map(obs => obs[param]),
-                    borderColor: getRandomColor(),
-                    fill: false,
-                    tension: 0.4
-                }))
-            };
-
-            // Initialize chart view
-            function createChart() {
-                if (currentChart) {
-                    currentChart.destroy();
                 }
+                
+                updateDisplay(result, forecastData, currentGroup, newGroup.observations, newGroup.conditions);
+            });
 
-                const ctx = document.getElementById('obsChart').getContext('2d');
-                currentChart = new Chart(ctx, {
-                    type: 'line',
-                    data: chartData,
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        scales: {
-                            x: {
-                                type: 'time',
-                                time: {
-                                    unit: 'hour',
-                                    displayFormats: {
-                                        hour: 'MMM d, HH:mm'
-                                    }
-                                },
-                                title: {
-                                    display: true,
-                                    text: 'Time (UTC)'
-                                }
-                            },
-                            y: {
-                                beginAtZero: false
-                            }
-                        },
-                        plugins: {
-                            legend: {
-                                position: 'top',
-                                labels: {
-                                    usePointStyle: true
-                                }
-                            }
-                        }
-                    }
-                });
-            }
-
-            // Setup view toggle handlers
-            tableViewBtn.onclick = function() {
-                tableViewBtn.classList.add('active');
-                chartViewBtn.classList.remove('active');
-                modalContent.style.display = 'block';
-                modalChartContent.style.display = 'none';
-            };
-
-            chartViewBtn.onclick = function() {
-                chartViewBtn.classList.add('active');
-                tableViewBtn.classList.remove('active');
-                modalContent.style.display = 'none';
-                modalChartContent.style.display = 'block';
-                createChart();
-            };
-
-            // Show table view by default
-            tableViewBtn.classList.add('active');
-            chartViewBtn.classList.remove('active');
-            modalContent.style.display = 'block';
-            modalChartContent.style.display = 'none';
-        } else {
-            modalContent.innerHTML = '<p>No observations found for the selected parameters.</p>';
+            // Initial display with current group
+            updateDisplay(result, forecastData, currentGroup, displayObsParams, displayCondParams);
         }
     } catch (error) {
-        console.error('Error fetching station observations:', error);
-        modalContent.innerHTML = '<p>Error loading observations. Please try again later.</p>';
+        console.error('Error:', error);
+        modalContent.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+    }
+};
+
+// Function to update the display based on selected group
+function updateDisplay(result, forecastData, group, displayObsParams, displayCondParams) {
+    const modalContent = document.getElementById('modalObsContent');
+    const modalChartContent = document.getElementById('modalChartContent');
+    
+    if (!result.observations || result.observations.length === 0) {
+        modalContent.innerHTML = '<p>No observations available</p>';
+        return;
     }
 
-    // Add close handlers
+    // Get parameters for the selected group
+    const groupConfig = parameterGroups[group];
+    
+    // Get available observation parameters from display parameters
+    const availableObsParams = displayObsParams.filter(param => 
+        result.observations.some(obs => obs[param] !== undefined)
+    );
+
+    // Get available condition parameters from display parameters
+    const availableCondParams = displayCondParams.filter(param => 
+        forecastData.forecasts?.some(f => f[param] !== undefined)
+    );
+
+    if (availableObsParams.length === 0 && availableCondParams.length === 0) {
+        modalContent.innerHTML = '<p>No data available for the selected parameter group</p>';
+        return;
+    };
+
+    // Create a mapping of parameter names to display names
+    const paramDisplayNames = {};
+    Object.entries(parameterGroups).forEach(([group, config]) => {
+        (config.observations || []).forEach(param => {
+            paramDisplayNames[param] = `obs ${param} ${config.units[param]}`;
+        });
+        (config.conditions || []).forEach(param => {
+            paramDisplayNames[param] = `fx ${param} ${config.units[param]}`;
+        });
+    });
+
+    // Combine observations and forecasts
+    const allData = [
+        ...result.observations.map(obs => ({ ...obs, type: 'observation' })),
+        ...(forecastData.forecasts || []).map(forecast => ({ ...forecast, type: 'forecast' }))
+    ].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+
+
+    // Create table HTML
+    modalContent.innerHTML = generateTableHtml(availableObsParams, availableCondParams, result, forecastData);
+
+    // Setup chart data
+    window.currentChartData = setupChartData(result, forecastData, availableObsParams, availableCondParams);
+
+    // If chart view is active, update the chart
+    if (chartViewBtn?.classList.contains('active')) {
+        // Destroy previous chart if it exists
+        if (currentChart) {
+            currentChart.destroy();
+        }
+
+        // Create new chart
+        const ctx = document.getElementById('obsChart').getContext('2d');
+        currentChart = new Chart(ctx, {
+            type: 'line',
+            data: window.currentChartData,
+            options: chartOptions
+        });
+    }
+}
+
+// Add styles
+const addStyles = () => {
+    const styleTag = document.createElement('style');
+    styleTag.textContent = `
+        #modalChartContent {
+            height: 400px;
+            width: 100%;
+            padding: 10px;
+        }
+
+        .station-metadata {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 15px 0 10px;
+        }
+        .metadata-item {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 8px 12px;
+        }
+        .obs-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+        .obs-table th,
+        .obs-table td {
+            padding: 8px;
+            text-align: right;
+            border: 1px solid #ddd;
+        }
+        .obs-table th:first-child,
+        .obs-table td:first-child {
+            text-align: left;
+        }
+        .obs-table thead tr:first-child th {
+            background-color: #f5f5f5;
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            border-bottom: none;
+        }
+        .obs-table thead tr:last-child th {
+            background-color: #f5f5f5;
+            position: sticky;
+            top: 37px;
+            z-index: 2;
+        }
+        .obs-table thead tr:first-child th[rowspan="2"] {
+            z-index: 3;
+        }
+        .obs-table td.observation {
+            background-color: #fff;
+        }
+        .obs-table td.forecast {
+            background-color: #f0f8ff;
+        }
+        .obs-table .obs-header {
+            background-color: #e3f2fd;
+            font-weight: bold;
+        }
+
+        .obs-table .forecast-header {
+            background-color: #fff3e0;
+            font-weight: bold;
+        }
+
+        .obs-table thead tr:nth-child(2) th,
+        .obs-table thead tr:nth-child(3) th {
+            background-color: #f5f5f5;
+        }
+        .obs-table-container {
+            max-height: 500px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+        }
+        .forecast {
+            background-color: #fff3e0;
+        }
+        .metadata-separator {
+            margin: 15px 0;
+            border: 0;
+            border-top: 1px solid #dee2e6;
+        }
+    `;
+    document.head.appendChild(styleTag);
+};
+
+document.addEventListener('DOMContentLoaded', addStyles);
+
+const paramDisplayNames = {
+    airTemp: 'Air Temperature (°C)',
+    surfaceTemp: 'Surface Temperature (°C)',
+    relativeHumidity: 'Relative Humidity (%)',
+    windSpeed: 'Wind Speed (m/s)',
+    windSpeed2m: 'Wind Speed at 2m (m/s)',
+    windSpeedLowerBound: 'Wind Speed Lower Bound (m/s)',
+    windSpeedUpperBound: 'Wind Speed Upper Bound (m/s)',
+    windDirection: 'Wind Direction (°)',
+    shortWaveRadiation: 'Short Wave Radiation (W/m²)',
+    globalRadiation60Min: 'Global Radiation (J/cm²)',
+    globalRadiation: 'Global Radiation (J/cm²)',
+    sunshine60Min: 'Sunshine Duration (min)',
+    sunshineDuration: 'Sunshine Duration (min)',
+    cloudCover: 'Cloud Cover (%)',
+    totalCloudCover: 'Total Cloud Cover (%)'
+};
+
+const generateTableHtml = (obsParams, forecastParams, result, forecastData) => {
+    let tableHtml = '<table class="obs-table"><thead>';
+    
+    // First row: Main column group headers
+    tableHtml += '<tr>';
+    tableHtml += '<th rowspan="3">Time (UTC)</th>';
+    
+    // Only show Observations header if there are observation parameters with data
+    const hasObsData = obsParams.some(param => 
+        result.observations.some(obs => obs[param] !== undefined)
+    );
+    if (hasObsData) {
+        tableHtml += '<th colspan="' + obsParams.length + '" class="obs-header">Observations</th>';
+    }
+    
+    // Only show Forecast header if there are forecast parameters with data
+    const hasForecastData = forecastParams.some(param => 
+        forecastData.forecasts?.some(f => f[param] !== undefined)
+    );
+    if (hasForecastData) {
+        tableHtml += '<th colspan="' + forecastParams.length + '" class="forecast-header">Forecast</th>';
+    }
+    
+    tableHtml += '</tr>';
+
+    // Second row: parameter names
+    tableHtml += '<tr>';
+    
+    // Only add observation parameter names if there's data
+    if (hasObsData) {
+        obsParams.forEach(param => {
+            const displayName = paramDisplayNames[param]?.split(' (')[0] || param;
+            tableHtml += `<th>${displayName}</th>`;
+        });
+    }
+    
+    // Only add forecast parameter names if there's data
+    if (hasForecastData) {
+        forecastParams.forEach(param => {
+            const displayName = paramDisplayNames[param]?.split(' (')[0] || param;
+            tableHtml += `<th>${displayName}</th>`;
+        });
+    }
+    tableHtml += '</tr>';
+
+    // Third row: units
+    tableHtml += '<tr>';
+    
+    // Only add observation units if there's data
+    if (hasObsData) {
+        obsParams.forEach(param => {
+            const unit = paramDisplayNames[param]?.match(/\((.*?)\)/)?.[1] || '';
+            tableHtml += `<th>${unit}</th>`;
+        });
+    }
+    
+    // Only add forecast units if there's data
+    if (hasForecastData) {
+        forecastParams.forEach(param => {
+            const unit = paramDisplayNames[param]?.match(/\((.*?)\)/)?.[1] || '';
+            tableHtml += `<th>${unit}</th>`;
+        });
+    }
+    tableHtml += '</tr></thead><tbody>';
+    
+    // Get all unique timestamps
+    const allTimestamps = [
+        ...new Set([
+            ...result.observations.map(obs => obs.timestamp),
+            ...(forecastData.forecasts || []).map(f => f.timestamp)
+        ])
+    ].sort();
+
+    // Generate rows for each timestamp
+    allTimestamps.forEach(timestamp => {
+        const obs = result.observations.find(o => o.timestamp === timestamp);
+        const forecast = forecastData.forecasts?.find(f => f.timestamp === timestamp);
+        
+        // Check if this row has any data for the current view
+        const rowHasObsData = obsParams.some(param => obs?.[param] !== undefined && obs?.[param] !== null);
+        const rowHasForecastData = forecastParams.some(param => forecast?.[param] !== undefined && forecast?.[param] !== null);
+        
+        // Skip row if it has no data for the current view
+        if ((!rowHasObsData || !hasObsData) && (!rowHasForecastData || !hasForecastData)) {
+            return;
+        }
+        
+        tableHtml += `<tr><td>${formatRelativeTime(timestamp)}</td>`;
+        
+        // Add observation values if we have any observation data
+        if (hasObsData) {
+            obsParams.forEach(param => {
+                const obsValue = obs?.[param];
+                let obsDisplayValue = '-';
+                if (obsValue !== undefined && obsValue !== null) {
+                    if (param === 'shortWaveRadiation' || param === 'globalRadiation60Min') {
+                        obsDisplayValue = obsValue.toFixed(1);
+                    } else if (['airTemp', 'surfaceTemp', 'windSpeed'].includes(param)) {
+                        obsDisplayValue = obsValue.toFixed(1);
+                    } else {
+                        obsDisplayValue = obsValue;
+                    }
+                }
+                tableHtml += `<td class="observation">${obsDisplayValue}</td>`;
+            });
+        }
+        
+        // Add forecast values if we have any forecast data
+        if (hasForecastData) {
+            forecastParams.forEach(param => {
+                const forecastValue = forecast?.[param];
+                let forecastDisplayValue = '-';
+                if (forecastValue !== undefined && forecastValue !== null) {
+                    if (param === 'shortWaveRadiation' || param === 'globalRadiation') {
+                        forecastDisplayValue = forecastValue.toFixed(1);
+                    } else if (['airTemp', 'windSpeed'].includes(param)) {
+                        forecastDisplayValue = forecastValue.toFixed(1);
+                    } else {
+                        forecastDisplayValue = forecastValue;
+                    }
+                }
+                tableHtml += `<td class="forecast">${forecastDisplayValue}</td>`;
+            });
+        }
+        tableHtml += '</tr>';
+    });
+
+    tableHtml += '</tbody></table>';
+    return `<div class="obs-table-container">${tableHtml}</div>`;
+};
+
+const setupChartData = (result, forecastData, obsParams, forecastParams) => {
+    const chartData = {
+        labels: [
+            ...result.observations.map(obs => new Date(obs.timestamp)),
+            ...(forecastData.forecasts || []).map(f => new Date(f.timestamp))
+        ],
+        datasets: []
+    };
+
+    // Add observation datasets
+    obsParams.forEach(param => {
+        const color = getRandomColor();
+        chartData.datasets.push({
+            label: `${paramDisplayNames[param] || param} (Observed)`,
+            data: result.observations.map(obs => obs[param]),
+            borderColor: color,
+            fill: false,
+
+        });
+    });
+
+    // Add forecast datasets
+    if (forecastData.forecasts && forecastData.forecasts.length > 0) {
+        forecastParams.forEach(param => {
+            const color = getRandomColor();
+            chartData.datasets.push({
+                label: `${paramDisplayNames[param] || param} (Forecast)`,
+                data: Array(result.observations.length).fill(null).concat(
+                    forecastData.forecasts.map(f => f[param])
+                ),
+                borderColor: color,
+                borderDash: [5, 5],
+                fill: false,
+    
+            });
+        });
+    }
+
+    return chartData;
+};
+
+const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    scales: {
+        x: {
+            type: 'time',
+            time: {
+                unit: 'hour',
+                displayFormats: {
+                    hour: 'MMM d, HH:mm'
+                }
+            },
+            title: {
+                display: true,
+                text: 'Time (UTC)'
+            }
+        },
+        y: {
+            beginAtZero: false
+        }
+    },
+    plugins: {
+        legend: {
+            position: 'top'
+        }
+    },
+    elements: {
+        point: {
+            radius: 3,
+            hitRadius: 10,
+            hoverRadius: 5
+        },
+        line: {
+            tension: 0.4
+        }
+    }
+};
+
+const createChart = (chartData) => {
+    // Destroy existing chart if it exists
+    if (currentChart) {
+        currentChart.destroy();
+        currentChart = null;
+    }
+
+    // Clear the canvas
+    const canvas = document.getElementById('obsChart');
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Set canvas size
+    canvas.style.height = '400px';
+    canvas.style.width = '100%';
+
+    // Create new chart
+    currentChart = new Chart(ctx, {
+        type: 'line',
+        data: chartData,
+        options: chartOptions
+    });
+
+    return currentChart;
+};
+
+// Global variables for UI elements
+let tableViewBtn;
+let chartViewBtn;
+let modalContent;
+let modalChartContent;
+
+// Setup view toggle handlers
+const setupViewToggles = () => {
+    // Initialize UI elements
+    tableViewBtn = document.getElementById('tableViewBtn');
+    chartViewBtn = document.getElementById('chartViewBtn');
+    modalContent = document.getElementById('modalObsContent');
+    modalChartContent = document.getElementById('modalChartContent');
+
+    tableViewBtn.onclick = () => {
+        tableViewBtn.classList.add('active');
+        chartViewBtn.classList.remove('active');
+        modalContent.style.display = 'block';
+        modalChartContent.style.display = 'none';
+    };
+
+    chartViewBtn.onclick = () => {
+        chartViewBtn.classList.add('active');
+        tableViewBtn.classList.remove('active');
+        modalContent.style.display = 'none';
+        modalChartContent.style.display = 'block';
+        if (window.currentChartData) {
+            createChart(window.currentChartData);
+        }
+    };
+
+    // Show table view by default
+    tableViewBtn.classList.add('active');
+    chartViewBtn.classList.remove('active');
+    modalContent.style.display = 'block';
+    modalChartContent.style.display = 'none';
+};
+
+// Add close handlers
+const setupCloseHandlers = () => {
     const closeBtn = document.getElementsByClassName('close')[0];
-    closeBtn.onclick = function() {
+    const modal = document.getElementById('obsModal');
+    
+    closeBtn.onclick = () => {
         modal.style.display = 'none';
         if (currentChart) {
             currentChart.destroy();
             currentChart = null;
         }
-    }
+    };
 
-    window.onclick = function(event) {
-        if (event.target == modal) {
+    window.onclick = (event) => {
+        if (event.target === modal) {
             modal.style.display = 'none';
             if (currentChart) {
                 currentChart.destroy();
                 currentChart = null;
             }
         }
+    };
+};
+
+// Initialize the application
+const init = async () => {
+    try {
+        // Wait for DOM to be fully loaded
+        await new Promise(resolve => {
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', resolve);
+            } else {
+                resolve();
+            }
+        });
+
+        // Initialize UI
+        setupViewToggles();
+        setupCloseHandlers();
+
+        // Initialize map controls and fetch initial data
+        await fetchStationData();
+    } catch (error) {
+        console.error('Error initializing application:', error);
     }
 };
+
+// Start the application
+init();

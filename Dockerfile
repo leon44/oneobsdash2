@@ -1,13 +1,13 @@
 FROM nginx:alpine
 
 # Copy the static files
-COPY . /workspace
+COPY . /usr/share/nginx/html/
 
 # Copy nginx configuration
 COPY nginx.conf /etc/nginx/nginx.conf
 
 # Expose the port
-EXPOSE 8080
+EXPOSE 80
 
 # Start Nginx
 CMD ["nginx", "-g", "daemon off;"]
