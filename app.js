@@ -405,13 +405,16 @@ document.addEventListener('DOMContentLoaded', () => {
             select.id = 'display-mode-filter';
 
             const options = [
+                { value: 'visibility', text: 'Show Visibility' },
+                { value: 'wmoWeatherCode', text: 'Show Weather Code' },
                 { value: 'airTemp', text: 'Show Temperature' },
                 { value: 'surfaceTemp', text: 'Show RST' },
                 { value: 'shortWaveRadiation', text: 'Show Radiation' },
                 { value: 'precipAcc60Min', text: 'Show Precip' },
                 { value: 'relativeHumidity', text: 'Show Humidity' },
                 { value: 'name', text: 'Show Names' },
-                { value: 'windSpeed', text: 'Show Wind Speed' }
+                { value: 'windSpeed', text: 'Show Wind Speed' },
+                { value: 'windGust', text: 'Show Wind Gust' }
             ];
 
             options.forEach(opt => {
@@ -469,7 +472,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 showTags: true,
                 showLatest: true,
                 interval: '1h',
-                parameters: 'airTemp,windSpeed,windSpeed2m,windDirection,relativeHumidity,surfaceTemp,shortWaveRadiation,globalRadiation60Min,precipAcc60Min'
+                parameters: 'airTemp,windSpeed,windSpeed2m,windDirection,relativeHumidity,surfaceTemp,shortWaveRadiation,globalRadiation60Min,precipAcc60Min,visibility,wmoWeatherCode,windGust,windGust2m'
             };
 
             // Add obsTypes parameter only for WMO stations
@@ -540,11 +543,19 @@ document.addEventListener('DOMContentLoaded', () => {
                                 value = latestObs.windSpeed2m;
                             }
                             displayValue = value !== undefined ? `${value}m/s` : undefined;
+                        } else if (displayMode === 'windGust') {
+                            // Try windGust first, fall back to windGust2m
+                            value = latestObs.windGust;
+                            if (value === undefined) {
+                                value = latestObs.windGust2m;
+                            }
+                            displayValue = value !== undefined ? `${value}m/s` : undefined;
                         } else {
                             value = latestObs[displayMode];
                             if (value !== undefined) {
                                 displayValue = displayMode === 'airTemp' ? `${value}°C` : 
                                              displayMode === 'surfaceTemp' ? `${value}°C` :
+                                             displayMode === 'visibility' ? `${value}km` :
                                              displayMode === 'precipAcc60Min' ? `${value}mm` : value;
                             }
                         }
@@ -678,6 +689,14 @@ function getRandomColor() {
 
 // Parameter groups configuration
 const parameterGroups = {
+    'General': {
+        observations: ['visibility', 'wmoWeatherCode'],
+        conditions: ['visibility', 'wmoWeatherCode'],
+        units: {
+            'visibility': 'km',
+            'wmoWeatherCode': ''
+        }
+    },
     'Temperature': {
         observations: ['airTemp', 'surfaceTemp', 'relativeHumidity'],
         conditions: ['airTemp', 'airTempLowerBound', 'airTempUpperBound', 'relativeHumidity'],
@@ -690,14 +709,16 @@ const parameterGroups = {
         }
     },
     'Wind': {
-        observations: ['windSpeed', 'windSpeed2m', 'windDirection'],
-        conditions: ['windSpeed', 'windSpeedLowerBound', 'windSpeedUpperBound', 'windDirection', 'windSpeed2m'],
+        observations: ['windSpeed', 'windSpeed2m', 'windDirection', 'windGust', 'windGust2m'],
+        conditions: ['windSpeed', 'windSpeedLowerBound', 'windSpeedUpperBound', 'windDirection', 'windSpeed2m', 'windGust', 'windGust2m'],
         units: {
             'windSpeed': 'm/s',
             'windSpeed2m': 'm/s',
             'windDirection': '°',
             'windSpeedLowerBound': 'm/s',
-            'windSpeedUpperBound': 'm/s'
+            'windSpeedUpperBound': 'm/s',
+            'windGust': 'm/s',
+            'windGust2m': 'm/s'
         }
     },
     'Radiation': {
@@ -1072,11 +1093,15 @@ const addStyles = () => {
 document.addEventListener('DOMContentLoaded', addStyles);
 
 const paramDisplayNames = {
+    visibility: 'Visibility (km)',
+    wmoWeatherCode: 'WMO Weather Code',
     airTemp: 'Air Temperature (°C)',
     surfaceTemp: 'Surface Temperature (°C)',
     relativeHumidity: 'Relative Humidity (%)',
     windSpeed: 'Wind Speed (m/s)',
     windSpeed2m: 'Wind Speed at 2m (m/s)',
+    windGust: 'Wind Gust (m/s)',
+    windGust2m: 'Wind Gust at 2m (m/s)',
     windSpeedLowerBound: 'Wind Speed Lower Bound (m/s)',
     windSpeedUpperBound: 'Wind Speed Upper Bound (m/s)',
     windDirection: 'Wind Direction (°)',
